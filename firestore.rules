@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Função auxiliar para checar o admin oficial
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'maxburguer2022@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admins allowlist
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Coleção de usuários: cada um só lê e edita seus próprios dados
+    // O admin pode alterar saldo de moedas para suporte
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+
+      // Subcoleções privadas: despensa e lista de compras
+      match /pantry/{itemId} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+
+      match /shoppingList/{itemId} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+    }
+
+    // Receitas Oficiais (Leitura pública/autenticada, gravação exclusiva do admin)
+    match /official_recipes/{recipeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Coleção de compatibilidade para receitas do catálogo
+    match /recipes/{recipeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Produtos da Loja (Afiliados/Cupons)
+    match /store_products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      // Permite incremento atômico de cliques por usuários sem bloquear a navegação
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['clicksCount']);
+    }
+
+    // Métricas globais: leitura e gravação restrita ao admin (ou incremento anônimo de shopeeClicks)
+    match /metrics/{metricId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Teste de conectividade e heartbeat
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

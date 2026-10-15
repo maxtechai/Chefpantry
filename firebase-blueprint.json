@@ -1,0 +1,316 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized system administrator with elevated permissions",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Official admin email address",
+          "maxLength": 128
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "superadmin"],
+          "description": "Administrative role level"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp of creation"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "ChefPantry user account profile",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth user identifier"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 128,
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Display name"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Role within the application"
+        },
+        "coins": {
+          "type": "number",
+          "description": "User gamification coins"
+        },
+        "level": {
+          "type": "number",
+          "description": "User level"
+        },
+        "xp": {
+          "type": "number",
+          "description": "Accumulated experience points"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp"
+        }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "PantryItem": {
+      "title": "PantryItem",
+      "description": "Item stored in user private pantry",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Item name"
+        },
+        "quantity": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Quantity descriptor"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Unit of measurement"
+        },
+        "location": {
+          "type": "string",
+          "enum": ["Geladeira", "Freezer", "Armário"],
+          "description": "Storage location"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Food category"
+        },
+        "expiryDate": {
+          "type": "string",
+          "description": "Expiry date YYYY-MM-DD"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["name", "quantity", "unit", "location", "category"]
+    },
+    "ShoppingItem": {
+      "title": "ShoppingItem",
+      "description": "Item in user smart shopping list",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Ingredient or item name"
+        },
+        "quantity": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Quantity"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Unit"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Food category"
+        },
+        "checked": {
+          "type": "boolean",
+          "description": "Checked status"
+        },
+        "recipeOrigin": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Name of recipe origin"
+        }
+      },
+      "required": ["name", "category", "checked"]
+    },
+    "OfficialRecipe": {
+      "title": "OfficialRecipe",
+      "description": "Official culinary recipe curated by admin",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Recipe title"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Summary"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Recipe category"
+        },
+        "prepTime": {
+          "type": "number",
+          "description": "Prep time in minutes"
+        },
+        "cookTime": {
+          "type": "number",
+          "description": "Cook time in minutes"
+        },
+        "servings": {
+          "type": "number",
+          "description": "Number of servings"
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["Fácil", "Médio", "Avançado"],
+          "description": "Difficulty level"
+        },
+        "isOfficial": {
+          "type": "boolean",
+          "description": "Official flag"
+        },
+        "views": {
+          "type": "number",
+          "description": "View counter"
+        },
+        "cookedCount": {
+          "type": "number",
+          "description": "How many times cooked"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["title", "category", "difficulty", "isOfficial"]
+    },
+    "StoreProduct": {
+      "title": "StoreProduct",
+      "description": "Shopee affiliate product recommended in the app",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Product title"
+        },
+        "price": {
+          "type": "number",
+          "description": "Current price in BRL"
+        },
+        "affiliateLink": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Shopee affiliate URL"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Product category"
+        },
+        "clicksCount": {
+          "type": "number",
+          "description": "Total affiliate clicks"
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Product display image"
+        }
+      },
+      "required": ["title", "price", "affiliateLink"]
+    },
+    "MetricOverview": {
+      "title": "MetricOverview",
+      "description": "System-wide metrics and performance stats",
+      "type": "object",
+      "properties": {
+        "totalRecipes": {
+          "type": "number",
+          "description": "Total active recipes"
+        },
+        "totalViews": {
+          "type": "number",
+          "description": "Cumulative recipe views"
+        },
+        "shopeeClicks": {
+          "type": "number",
+          "description": "Total affiliate clicks"
+        },
+        "affiliateRevenueEstimate": {
+          "type": "number",
+          "description": "Estimated revenue in BRL"
+        }
+      }
+    },
+    "TestConnection": {
+      "title": "TestConnection",
+      "description": "Document used for verifying client firestore connectivity",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Status string"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/Admin" },
+      "description": "Allowlist of administrative accounts verified by email"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles, level, and gamification coin balance"
+    },
+    "/users/{userId}/pantry/{itemId}": {
+      "schema": { "$ref": "#/entities/PantryItem" },
+      "description": "User private pantry items"
+    },
+    "/users/{userId}/shoppingList/{itemId}": {
+      "schema": { "$ref": "#/entities/ShoppingItem" },
+      "description": "User private shopping list items"
+    },
+    "/official_recipes/{recipeId}": {
+      "schema": { "$ref": "#/entities/OfficialRecipe" },
+      "description": "Official culinary and zero-waste recipes (admin managed)"
+    },
+    "/recipes/{recipeId}": {
+      "schema": { "$ref": "#/entities/OfficialRecipe" },
+      "description": "Catalog recipes compatibility collection"
+    },
+    "/store_products/{productId}": {
+      "schema": { "$ref": "#/entities/StoreProduct" },
+      "description": "Shopee affiliate products and promotional showcase"
+    },
+    "/metrics/{metricId}": {
+      "schema": { "$ref": "#/entities/MetricOverview" },
+      "description": "Aggregated platform and affiliate metrics (admin restricted)"
+    },
+    "/test/{docId}": {
+      "schema": { "$ref": "#/entities/TestConnection" },
+      "description": "Heartbeat and connectivity verification endpoint"
+    }
+  }
+}

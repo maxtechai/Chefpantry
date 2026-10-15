@@ -1,0 +1,8 @@
+{
+  "name": "ChefPantry - Despensa & Receitas Inteligentes",
+  "description": "Plataforma completa de gestão de receitas, despensa inteligente com IA Zero Desperdício, vitrine de afiliados Shopee e recompensas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

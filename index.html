@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChefPantry - Despensa &amp; Receitas Inteligentes</title>
+    <meta name="description" content="Plataforma completa de gestão de receitas, despensa inteligente com IA Zero Desperdício, vitrine de afiliados Shopee e recompensas." />
+    <meta property="og:title" content="ChefPantry - Despensa &amp; Receitas Inteligentes" />
+    <meta property="og:description" content="Plataforma completa de gestão de receitas, despensa inteligente com IA Zero Desperdício, vitrine de afiliados Shopee e recompensas." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#059669" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="ChefPantry" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        // Suppress harmless Vite HMR WebSocket closure in AI Studio preview environment
+        const OrigWebSocket = window.WebSocket;
+        if (OrigWebSocket) {
+          window.WebSocket = function(url, protocols) {
+            if (
+              protocols === 'vite-hmr' ||
+              (typeof url === 'string' && (url.includes('@vite') || url.includes('/vite-hmr')))
+            ) {
+              const emitter = new EventTarget();
+              const fakeWs = {
+                url,
+                readyState: 1,
+                CONNECTING: 0,
+                OPEN: 1,
+                CLOSING: 2,
+                CLOSED: 3,
+                binaryType: 'blob',
+                bufferedAmount: 0,
+                extensions: '',
+                protocol: 'vite-hmr',
+                send: function() {},
+                close: function() {},
+                addEventListener: function(type, fn, opts) {
+                  emitter.addEventListener(type, fn, opts);
+                  if (type === 'open') {
+                    setTimeout(function() { emitter.dispatchEvent(new Event('open')); }, 0);
+                  }
+                },
+                removeEventListener: function(type, fn, opts) { emitter.removeEventListener(type, fn, opts); },
+                dispatchEvent: function(e) { return emitter.dispatchEvent(e); },
+                set onopen(fn) { if (fn) emitter.addEventListener('open', fn); },
+                set onclose(fn) { if (fn) emitter.addEventListener('close', fn); },
+                set onerror(fn) { if (fn) emitter.addEventListener('error', fn); },
+                set onmessage(fn) { if (fn) emitter.addEventListener('message', fn); },
+              };
+              return fakeWs;
+            }
+            return new OrigWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = OrigWebSocket.prototype;
+          window.WebSocket.CONNECTING = 0;
+          window.WebSocket.OPEN = 1;
+          window.WebSocket.CLOSING = 2;
+          window.WebSocket.CLOSED = 3;
+        }
+
+        const origConsoleError = console.error;
+        console.error = function(...args) {
+          if (args.some(function(arg) {
+            const str = (arg && (arg.message || String(arg))) || '';
+            return str.includes('WebSocket closed without opened') || str.includes('vite-hmr');
+          })) {
+            return;
+          }
+          origConsoleError.apply(console, args);
+        };
+
+        window.addEventListener('error', function(event) {
+          if (event && event.message && event.message.includes('WebSocket closed without opened')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
