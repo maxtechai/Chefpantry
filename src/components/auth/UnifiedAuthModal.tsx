@@ -24,7 +24,7 @@ import {
 interface UnifiedAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (isNewRegistration?: boolean) => void;
   onOpenIntroSlides?: () => void;
   defaultAdminHint?: boolean;
 }
@@ -84,7 +84,8 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
       }
 
       setTimeout(() => {
-        if (onSuccess) onSuccess();
+        const hasOnboarded = localStorage.getItem('chefpantry_onboarded');
+        if (onSuccess) onSuccess(!hasOnboarded);
         onClose();
       }, 1100);
     } else {
@@ -101,8 +102,9 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
     clearError();
     setIsSubmitting(true);
 
+    const isRegistration = mode === 'register';
     let res;
-    if (mode === 'register') {
+    if (isRegistration) {
       res = await registerWithEmail(nameInput, emailInput, passwordInput);
     } else {
       res = await loginWithEmail(emailInput, passwordInput);
@@ -118,14 +120,14 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
       } else {
         setLocalMessage({
           type: 'success',
-          text: mode === 'register'
+          text: isRegistration
             ? '🎉 Conta de Chef criada com sucesso! Bem-vindo ao ChefPantry.'
             : '🍳 Login realizado com sucesso! Seus dados foram carregados.',
         });
       }
 
       setTimeout(() => {
-        if (onSuccess) onSuccess();
+        if (onSuccess) onSuccess(isRegistration);
         onClose();
       }, 1100);
     } else {

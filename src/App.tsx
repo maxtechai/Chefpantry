@@ -27,23 +27,15 @@ const MainLayout: React.FC = () => {
 
   // Initial Onboarding Flow:
   // 1. Welcome Splash & Slides (Shown ONLY on first launch for normal users)
-  // 2. Login Screen
-  // 3. Day 1 Pantry Onboarding ("O que tem na sua geladeira agora?")
+  // 2. Day 1 Pantry Onboarding ("O que tem na sua geladeira agora?") - ONLY APÓS CADASTRO!
   useEffect(() => {
     const hasSeenSlides = localStorage.getItem('chefpantry_welcome_slides_seen');
-    const hasOnboarded = localStorage.getItem('chefpantry_onboarded');
 
     if (!hasSeenSlides) {
       // First-time visit: Start with the App Logo splash screen and onboarding slides
       const timer = setTimeout(() => {
         setShowWelcomeIntro(true);
       }, 400);
-      return () => clearTimeout(timer);
-    } else if (!hasOnboarded) {
-      // Returning user who hasn't completed pantry onboarding yet
-      const timer = setTimeout(() => {
-        setShowOnboardingModal(true);
-      }, 700);
       return () => clearTimeout(timer);
     }
   }, []);
@@ -54,14 +46,16 @@ const MainLayout: React.FC = () => {
     setShowAuthModal(true);
   };
 
-  const handleFinishAuth = () => {
+  const handleFinishAuth = (isNewRegistration?: boolean) => {
     setShowAuthModal(false);
-    // If pantry onboarding is not done yet, proceed to Day 1 onboarding
-    const hasOnboarded = localStorage.getItem('chefpantry_onboarded');
-    if (!hasOnboarded) {
-      setTimeout(() => {
-        setShowOnboardingModal(true);
-      }, 500);
+    // Modal "O que tem na sua geladeira agora?" aparece APENAS APÓS CADASTRO
+    if (isNewRegistration) {
+      const hasOnboarded = localStorage.getItem('chefpantry_onboarded');
+      if (!hasOnboarded) {
+        setTimeout(() => {
+          setShowOnboardingModal(true);
+        }, 500);
+      }
     }
   };
 
@@ -113,8 +107,8 @@ const MainLayout: React.FC = () => {
       {/* Step 2: Unified Auth Modal (Admin and Normal User Login) */}
       <UnifiedAuthModal
         isOpen={showAuthModal}
-        onClose={() => handleFinishAuth()}
-        onSuccess={() => handleFinishAuth()}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={(isNewRegistration) => handleFinishAuth(isNewRegistration)}
         onOpenIntroSlides={() => setShowWelcomeIntro(true)}
       />
 

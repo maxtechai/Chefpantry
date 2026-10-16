@@ -29,6 +29,12 @@ import {
   AlertCircle,
   Wifi,
   WifiOff,
+  MessageSquare,
+  Send,
+  Bot,
+  RotateCcw,
+  Check,
+  Video,
 } from 'lucide-react';
 import { Recipe, RecipeCategory, RecipeIngredient, RecipeInstruction, ShopeeProduct, FoodCategory } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -152,14 +158,39 @@ export const AdminDashboard: React.FC = () => {
   const [rTips, setRTips] = useState<string>('');
 
   // Embedded AI Recipe Assistant State
+  const [aiAssistantTab, setAiAssistantTab] = useState<'chat' | 'quick'>('chat');
   const [aiRecipePrompt, setAiRecipePrompt] = useState<string>('');
   const [isAiStructuring, setIsAiStructuring] = useState<boolean>(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState<boolean>(false);
   const [imageAlternatives, setImageAlternatives] = useState<string[]>([]);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const handleGenerateDishImage = async (customTitle?: string) => {
+  // Agnes Interactive Chat State
+  const [agnesChatMessages, setAgnesChatMessages] = useState<
+    Array<{
+      id: string;
+      role: 'user' | 'assistant';
+      content: string;
+      structuredRecipe?: any;
+      timestamp: string;
+    }>
+  >([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content:
+        'Olá, Administrador! Sou a **Agnes AI**, sua chef consultora executiva do ChefPantry. 👩‍🍳✨\n\nPeça qualquer sugestão ou receita (ex: *"Crie um Escondidinho de Carne-Seca cremoso"*, *"Me sugira uma receita fit para airfryer"*, *"Bolo fofinho de cenoura com brigadeiro"*). Eu monto a receita completa e você poderá **importá-la com 1 clique para o formulário**!',
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    },
+  ]);
+  const [agnesChatInput, setAgnesChatInput] = useState<string>('');
+  const [isAgnesChatLoading, setIsAgnesChatLoading] = useState<boolean>(false);
+  const [agnesChatError, setAgnesChatError] = useState<string | null>(null);
+  const [appliedRecipeSuccess, setAppliedRecipeSuccess] = useState<string | null>(null);
+
+  const handleGenerateDishImage = async (customTitle?: string, customCategory?: RecipeCategory) => {
     const titleToUse = customTitle || rTitle || aiRecipePrompt || 'Prato gourmet';
+    const categoryToUse = customCategory || rCategory;
     setIsGeneratingImage(true);
     try {
       const res = await fetch('/api/gemini/generate-image', {
@@ -168,7 +199,7 @@ export const AdminDashboard: React.FC = () => {
         body: JSON.stringify({
           dishTitle: titleToUse,
           prompt: `${titleToUse}, comida apetitosa bem servida`,
-          category: rCategory,
+          category: categoryToUse,
           avoidUrl: rImageUrl,
         }),
       });
@@ -199,6 +230,12 @@ export const AdminDashboard: React.FC = () => {
     'https://images.unsplash.com/photo-1594498653385-d5172c532c00?auto=format&fit=crop&w=600&q=80'
   );
   const [shpBadge, setShpBadge] = useState<string>('Destaque Shopee');
+  const [shpDescription, setShpDescription] = useState<string>('');
+  const [shpVideoUrl, setShpVideoUrl] = useState<string>('');
+  const [shpImages, setShpImages] = useState<string[]>([]);
+  const [isPullingShopee, setIsPullingShopee] = useState<boolean>(false);
+  const [shopeePullError, setShopeePullError] = useState<string | null>(null);
+  const [shopeePullSuccess, setShopeePullSuccess] = useState<string | null>(null);
 
   // Handle open create recipe modal
   const handleOpenCreateRecipe = () => {
@@ -269,9 +306,12 @@ export const AdminDashboard: React.FC = () => {
 
       const structured = await res.json();
 
-      setRTitle(structured.title || rTitle);
+      const newTitle = structured.title || rTitle;
+      const newCat = (structured.category as RecipeCategory) || rCategory;
+
+      setRTitle(newTitle);
       setRDesc(structured.description || rDesc);
-      if (structured.category) setRCategory(structured.category as RecipeCategory);
+      if (structured.category) setRCategory(newCat);
       if (structured.prepTime) setRPrepTime(structured.prepTime);
       if (structured.cookTime) setRCookTime(structured.cookTime);
       if (structured.servings) setRServings(structured.servings);
@@ -322,12 +362,132 @@ export const AdminDashboard: React.FC = () => {
           setRShopeeIds((prev) => Array.from(new Set([...prev, ...matchingIds])));
         }
       }
+
+      // Also automatically fetch the matching culinary photo and options for this newly structured dish!
+      handleGenerateDishImage(newTitle, newCat);
     } catch (err: any) {
       console.error(err);
       setAiError(err.message || 'Erro ao processar receita com IA.');
     } finally {
       setIsAiStructuring(false);
     }
+  };
+
+  const handleSendAgnesChat = async (customPrompt?: string) => {
+    const textToSend = (customPrompt || agnesChatInput).trim();
+    if (!textToSend || isAgnesChatLoading) return;
+
+    const userMsg = {
+      id: `usr_${Date.now()}`,
+      role: 'user' as const,
+      content: textToSend,
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    const updatedHistory = [...agnesChatMessages, userMsg];
+    setAgnesChatMessages(updatedHistory);
+    setAgnesChatInput('');
+    setIsAgnesChatLoading(true);
+    setAgnesChatError(null);
+
+    try {
+      const res = await fetch('/api/agnes/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: updatedHistory.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Falha ao comunicar com a Agnes AI.');
+      }
+
+      const data = await res.json();
+      const botMsg = {
+        id: `bot_${Date.now()}`,
+        role: 'assistant' as const,
+        content: data.reply || 'Receita preparada com sucesso!',
+        structuredRecipe: data.structuredRecipe,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      };
+
+      setAgnesChatMessages((prev) => [...prev, botMsg]);
+    } catch (err: any) {
+      console.error('Error in Agnes Chat:', err);
+      setAgnesChatError(err.message || 'Erro ao conversar com a Agnes. Tente novamente.');
+    } finally {
+      setIsAgnesChatLoading(false);
+    }
+  };
+
+  const handleApplyRecipeFromChat = (structured: any) => {
+    if (!structured) return;
+
+    const newTitle = structured.title || rTitle;
+    const newCat = (structured.category as RecipeCategory) || rCategory;
+
+    setRTitle(newTitle);
+    setRDesc(structured.description || rDesc);
+    if (structured.category) setRCategory(newCat);
+    if (structured.prepTime) setRPrepTime(structured.prepTime);
+    if (structured.cookTime) setRCookTime(structured.cookTime);
+    if (structured.servings) setRServings(structured.servings);
+    if (structured.difficulty) setRDifficulty(structured.difficulty);
+    if (structured.estimatedCalories) setRCalories(structured.estimatedCalories);
+
+    if (structured.ingredients?.length) {
+      setRIngredients(
+        structured.ingredients.map((ing: any, idx: number) => ({
+          id: `ing_${Date.now()}_${idx}`,
+          name: ing.name,
+          quantity: String(ing.quantity || '1'),
+          unit: ing.unit || 'unidade',
+          category: (ing.category as FoodCategory) || 'Mercearia & Grãos',
+        }))
+      );
+    }
+
+    if (structured.instructions?.length) {
+      setRInstructions(
+        structured.instructions.map((ins: any) => ({
+          step: ins.step,
+          title: ins.title,
+          text: ins.text,
+          timeMinutes: ins.timeMinutes || 5,
+        }))
+      );
+    }
+
+    if (structured.suggestedShopeeProducts?.length) {
+      const matchedIds: string[] = [];
+      structured.suggestedShopeeProducts.forEach((sug: any) => {
+        const found = (shopeeProducts || []).find(
+          (p: ShopeeProduct) =>
+            p.title.toLowerCase().includes(sug.searchKeywords?.toLowerCase() || '') ||
+            p.title.toLowerCase().includes(sug.name?.toLowerCase() || '')
+        );
+        if (found && !matchedIds.includes(found.id)) {
+          matchedIds.push(found.id);
+        }
+      });
+      if (matchedIds.length > 0) {
+        setRShopeeIds((prev) => Array.from(new Set([...prev, ...matchedIds])));
+      }
+    }
+
+    if (structured.tips?.length) {
+      setRTips(Array.isArray(structured.tips) ? structured.tips.join('\n') : String(structured.tips));
+    }
+
+    // Automatically trigger Agnes Image Generation for the new recipe!
+    handleGenerateDishImage(newTitle, newCat);
+
+    setAppliedRecipeSuccess(`Receita "${newTitle}" importada com sucesso para o formulário!`);
+    setTimeout(() => setAppliedRecipeSuccess(null), 6000);
   };
 
   const handleSaveRecipe = (e: React.FormEvent) => {
@@ -362,7 +522,71 @@ export const AdminDashboard: React.FC = () => {
     setShowRecipeModal(false);
   };
 
-  // Shopee Product Add
+  // Shopee Product Modal Handlers & Automatic Link Scraper
+  const handleOpenShopeeModal = () => {
+    setShpTitle('');
+    setShpCategory('Utensílios de Medição');
+    setShpPrice('29.90');
+    setShpOrigPrice('49.90');
+    setShpAffiliateLink('');
+    setShpImageUrl('https://images.unsplash.com/photo-1594498653385-d5172c532c00?auto=format&fit=crop&w=600&q=80');
+    setShpBadge('Destaque Shopee');
+    setShpDescription('');
+    setShpVideoUrl('');
+    setShpImages([]);
+    setShopeePullError(null);
+    setShopeePullSuccess(null);
+    setShowShopeeModal(true);
+  };
+
+  const handleUnfurlShopeeProduct = async (urlToFetch?: string) => {
+    const targetUrl = (urlToFetch || shpAffiliateLink).trim();
+    if (!targetUrl) {
+      setShopeePullError('Cole o seu link de afiliado ou link do produto Shopee primeiro.');
+      return;
+    }
+
+    setIsPullingShopee(true);
+    setShopeePullError(null);
+    setShopeePullSuccess(null);
+
+    try {
+      const res = await fetch('/api/shopee/unfurl', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Falha ao buscar dados do link Shopee.');
+      }
+
+      const data = await res.json();
+
+      if (data.title) setShpTitle(data.title);
+      if (data.price) setShpPrice(String(data.price));
+      if (data.originalPrice) setShpOrigPrice(String(data.originalPrice));
+      if (data.category) setShpCategory(data.category);
+      if (data.imageUrl) setShpImageUrl(data.imageUrl);
+      if (data.badge) setShpBadge(data.badge);
+      if (data.description) setShpDescription(data.description);
+      if (data.videoUrl) setShpVideoUrl(data.videoUrl);
+      if (data.images && Array.isArray(data.images) && data.images.length > 0) {
+        setShpImages(data.images);
+      }
+      if (data.affiliateLink) setShpAffiliateLink(data.affiliateLink);
+
+      setShopeePullSuccess(`✨ Sucesso! Título, preços, imagens e descrição foram puxados.`);
+      setTimeout(() => setShopeePullSuccess(null), 5000);
+    } catch (err: any) {
+      console.error('Error unfurling Shopee product:', err);
+      setShopeePullError(err.message || 'Erro ao puxar dados da Shopee. Tente novamente.');
+    } finally {
+      setIsPullingShopee(false);
+    }
+  };
+
   const handleSaveShopeeProduct = (e: React.FormEvent) => {
     e.preventDefault();
     if (!shpTitle.trim()) return;
@@ -384,6 +608,9 @@ export const AdminDashboard: React.FC = () => {
       salesCount: '10k+ vendidos',
       badge: shpBadge,
       commissionEstimate: `R$ ${(price * 0.12).toFixed(2)}`,
+      description: shpDescription.trim() || undefined,
+      videoUrl: shpVideoUrl.trim() || undefined,
+      images: shpImages.length > 0 ? shpImages : [shpImageUrl],
     });
 
     setShowShopeeModal(false);
@@ -687,8 +914,8 @@ export const AdminDashboard: React.FC = () => {
               </p>
             </div>
             <button
-              onClick={() => setShowShopeeModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
+              onClick={handleOpenShopeeModal}
+              className="px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>+ Novo Produto Shopee</span>
@@ -1086,62 +1313,348 @@ export const AdminDashboard: React.FC = () => {
 
             {/* Scrollable Form Body */}
             <div className="p-5 overflow-y-auto space-y-6 text-xs">
-              {/* EMBEDDED GEMINI AI ASSISTANT BOX */}
+              {/* EMBEDDED AGNES AI CHAT & RECIPE ASSISTANT */}
               <div className="bg-gradient-to-br from-purple-50 via-indigo-50 to-pink-50 p-4 rounded-2xl border border-purple-200 space-y-3 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-purple-900 font-extrabold text-sm">
-                    <Sparkles className="w-4 h-4 text-purple-600" />
-                    Assistente de IA Embutido no Admin
+                {/* Header & Tabs */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-200/70 pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center shadow-xs">
+                      <Bot className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-sm text-purple-950">Agnes AI</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Online • Agnes 3.0 Flash
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-purple-700">
+                        Chef Consultora Executiva do Catálogo Oficial
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-[10px] bg-purple-200 text-purple-900 px-2 py-0.5 rounded-full font-bold">
-                    1-Clique
-                  </span>
-                </div>
-                <p className="text-purple-800 text-xs">
-                  Digite apenas o nome do prato ou cole um texto bruto (de WhatsApp, anotações ou internet). A IA formata automaticamente todos os campos, ingredientes estruturados, etapas e sugere produtos da Shopee!
-                </p>
 
-                <div className="space-y-2">
-                  <textarea
-                    rows={2}
-                    placeholder="Ex: Bolo de cenoura de liquidificador fofinho com cobertura de brigadeiro, ou texto completo..."
-                    value={aiRecipePrompt}
-                    onChange={(e) => setAiRecipePrompt(e.target.value)}
-                    className="w-full bg-white border border-purple-200 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                  />
-
-                  <div className="flex items-center justify-between">
+                  {/* Mode Selector Tabs */}
+                  <div className="flex items-center bg-purple-100/80 p-0.5 rounded-xl border border-purple-200 self-start sm:self-auto">
                     <button
                       type="button"
-                      onClick={() =>
-                        setAiRecipePrompt(
-                          'Escondidinho cremoso de mandioca com carne-seca desfiada e queijo coalho gratinado'
-                        )
-                      }
-                      className="text-[11px] text-purple-700 hover:underline font-semibold"
+                      onClick={() => setAiAssistantTab('chat')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        aiAssistantTab === 'chat'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'text-purple-700 hover:text-purple-900'
+                      }`}
                     >
-                      Exemplo: Escondidinho de Carne-Seca
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      Chat com Agnes
                     </button>
-
                     <button
                       type="button"
-                      onClick={handleAiFormatRecipe}
-                      disabled={isAiStructuring || !aiRecipePrompt.trim()}
-                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-md shadow-purple-600/20 transition-all"
+                      onClick={() => setAiAssistantTab('quick')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        aiAssistantTab === 'quick'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'text-purple-700 hover:text-purple-900'
+                      }`}
                     >
-                      {isAiStructuring ? (
-                        <>Formatando com Gemini...</>
-                      ) : (
-                        <>
-                          <Sparkles className="w-3.5 h-3.5" />
-                          Preencher Campos com IA
-                        </>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      1-Clique Rápido
+                    </button>
+                  </div>
+                </div>
+
+                {/* Feedback Banner if Recipe was applied */}
+                {appliedRecipeSuccess && (
+                  <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2.5 rounded-xl text-xs flex items-center gap-2 font-bold animate-fade-in shadow-xs">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{appliedRecipeSuccess}</span>
+                  </div>
+                )}
+
+                {/* TAB 1: INTERACTIVE CHAT WITH AGNES */}
+                {aiAssistantTab === 'chat' && (
+                  <div className="space-y-3">
+                    {/* Chat Messages Scroll Container */}
+                    <div className="bg-white/90 border border-purple-100 rounded-2xl p-3 max-h-72 min-h-48 overflow-y-auto space-y-3 shadow-inner">
+                      {agnesChatMessages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`flex flex-col ${
+                            msg.role === 'user' ? 'items-end' : 'items-start'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mb-1 px-1">
+                            {msg.role === 'user' ? (
+                              <span>Você • {msg.timestamp}</span>
+                            ) : (
+                              <span className="flex items-center gap-1 font-semibold text-purple-700">
+                                <Bot className="w-3 h-3 text-purple-600" />
+                                Agnes AI • {msg.timestamp}
+                              </span>
+                            )}
+                          </div>
+
+                          <div
+                            className={`rounded-2xl px-3.5 py-2.5 text-xs max-w-[92%] leading-relaxed ${
+                              msg.role === 'user'
+                                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-tr-xs shadow-xs font-medium'
+                                : 'bg-purple-50/80 border border-purple-100 text-gray-800 rounded-tl-xs shadow-xs whitespace-pre-wrap'
+                            }`}
+                          >
+                            {msg.content}
+
+                            {/* STRUCTURED RECIPE ACTION CARD */}
+                            {msg.structuredRecipe && (
+                              <div className="mt-3 p-3 bg-white rounded-xl border-2 border-purple-200 text-gray-800 shadow-sm space-y-2">
+                                <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2">
+                                  <div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                                      {msg.structuredRecipe.category || 'Receita Oficial'}
+                                    </span>
+                                    <h4 className="font-black text-sm text-gray-900 mt-1">
+                                      {msg.structuredRecipe.title}
+                                    </h4>
+                                    <p className="text-[11px] text-gray-600 line-clamp-2 mt-0.5">
+                                      {msg.structuredRecipe.description}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-1.5 text-[10px] text-gray-600 bg-gray-50 p-2 rounded-lg">
+                                  <div>
+                                    <span className="font-semibold text-gray-800 block">Preparo:</span>
+                                    {msg.structuredRecipe.prepTime || 15} min
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-gray-800 block">Cozimento:</span>
+                                    {msg.structuredRecipe.cookTime || 20} min
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-gray-800 block">Rendimento:</span>
+                                    {msg.structuredRecipe.servings || 4} porções
+                                  </div>
+                                </div>
+
+                                {msg.structuredRecipe.ingredients?.length && (
+                                  <div className="text-[11px] text-gray-700">
+                                    <span className="font-bold text-purple-900">
+                                      Ingredientes ({msg.structuredRecipe.ingredients.length}):
+                                    </span>{' '}
+                                    {msg.structuredRecipe.ingredients
+                                      .slice(0, 4)
+                                      .map((i: any) => i.name)
+                                      .join(', ')}
+                                    {msg.structuredRecipe.ingredients.length > 4 && '...'}
+                                  </div>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyRecipeFromChat(msg.structuredRecipe)}
+                                  className="w-full mt-2 py-2 px-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm shadow-emerald-600/30 transition-all cursor-pointer"
+                                >
+                                  <Sparkles className="w-4 h-4 text-emerald-200" />
+                                  <span>Preencher Formulário com Esta Receita</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+
+                      {isAgnesChatLoading && (
+                        <div className="flex items-center gap-2 text-xs text-purple-700 bg-purple-50 p-2.5 rounded-xl border border-purple-200 animate-pulse">
+                          <Bot className="w-4 h-4 text-purple-600 animate-spin" />
+                          <span>Agnes está criando e estruturando sua receita com IA...</span>
+                        </div>
                       )}
-                    </button>
-                  </div>
+                    </div>
 
-                  {aiError && <p className="text-xs text-rose-600 font-semibold">{aiError}</p>}
-                </div>
+                    {/* Chat Error Notice */}
+                    {agnesChatError && (
+                      <p className="text-xs text-rose-600 font-semibold">{agnesChatError}</p>
+                    )}
+
+                    {/* EXAMPLES: QUICK RECIPE PROMPT PILLS */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-purple-800 font-semibold">
+                        <span>💡 Exemplos rápidos para pedir à Agnes:</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAgnesChatMessages([
+                              {
+                                id: 'welcome_reset',
+                                role: 'assistant',
+                                content:
+                                  'Histórico limpo! O que você gostaria que eu crie hoje para o catálogo do ChefPantry? 👩‍🍳',
+                                timestamp: new Date().toLocaleTimeString('pt-BR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                }),
+                              },
+                            ])
+                          }
+                          className="text-[10px] text-purple-600 hover:underline flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          Limpar Chat
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSendAgnesChat(
+                              'Crie uma receita especial de Escondidinho de Carne-Seca desfiada com purê de mandioca e queijo coalho gratinado'
+                            )
+                          }
+                          disabled={isAgnesChatLoading}
+                          className="text-[11px] bg-white border border-purple-200 hover:border-purple-400 hover:bg-purple-100/60 text-purple-800 px-2.5 py-1 rounded-lg font-medium transition-colors"
+                        >
+                          🥘 Escondidinho de Carne-Seca
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSendAgnesChat(
+                              'Crie uma receita de Bolo de Cenoura de liquidificador bem fofinho com cobertura de brigadeiro'
+                            )
+                          }
+                          disabled={isAgnesChatLoading}
+                          className="text-[11px] bg-white border border-purple-200 hover:border-purple-400 hover:bg-purple-100/60 text-purple-800 px-2.5 py-1 rounded-lg font-medium transition-colors"
+                        >
+                          🍰 Bolo de Cenoura com Brigadeiro
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSendAgnesChat(
+                              'Crie uma receita de Frango Crocante na Airfryer com tempero de páprica e ervas finas'
+                            )
+                          }
+                          disabled={isAgnesChatLoading}
+                          className="text-[11px] bg-white border border-purple-200 hover:border-purple-400 hover:bg-purple-100/60 text-purple-800 px-2.5 py-1 rounded-lg font-medium transition-colors"
+                        >
+                          🍗 Frango Crocante Airfryer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSendAgnesChat(
+                              'Crie uma receita de Risoto de Camarão cremoso com limão siciliano e queijo parmesão'
+                            )
+                          }
+                          disabled={isAgnesChatLoading}
+                          className="text-[11px] bg-white border border-purple-200 hover:border-purple-400 hover:bg-purple-100/60 text-purple-800 px-2.5 py-1 rounded-lg font-medium transition-colors"
+                        >
+                          🍤 Risoto de Camarão
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSendAgnesChat(
+                              'Crie uma receita de Salada Caesar clássica com croutons crocantes e molho caseiro'
+                            )
+                          }
+                          disabled={isAgnesChatLoading}
+                          className="text-[11px] bg-white border border-purple-200 hover:border-purple-400 hover:bg-purple-100/60 text-purple-800 px-2.5 py-1 rounded-lg font-medium transition-colors"
+                        >
+                          🥗 Salada Caesar Artesanal
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Chat Input & Send Button */}
+                    <div className="flex gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={agnesChatInput}
+                        onChange={(e) => setAgnesChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSendAgnesChat();
+                          }
+                        }}
+                        placeholder="Converse com a Agnes... Ex: Crie uma receita de sobremesa rápida com morangos"
+                        disabled={isAgnesChatLoading}
+                        className="flex-1 bg-white border border-purple-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSendAgnesChat()}
+                        disabled={isAgnesChatLoading || !agnesChatInput.trim()}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-md shadow-purple-600/20 transition-all shrink-0 cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Enviar</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: FAST 1-CLICK FORMATTING */}
+                {aiAssistantTab === 'quick' && (
+                  <div className="space-y-2">
+                    <p className="text-purple-800 text-xs">
+                      Digite o nome do prato ou cole um texto bruto. A IA estrutura a <strong>receita oficial completa</strong> com ingredientes gastronômicos autênticos, modo de preparo e foto correspondente.
+                    </p>
+
+                    <textarea
+                      rows={2}
+                      placeholder="Ex: Bolo de cenoura de liquidificador fofinho com cobertura de brigadeiro crocante..."
+                      value={aiRecipePrompt}
+                      onChange={(e) => setAiRecipePrompt(e.target.value)}
+                      className="w-full bg-white border border-purple-200 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAiRecipePrompt(
+                              'Escondidinho cremoso de mandioca com carne-seca desfiada e queijo coalho gratinado'
+                            )
+                          }
+                          className="text-[11px] text-purple-700 hover:underline font-semibold bg-white px-2 py-0.5 rounded-md border border-purple-200"
+                        >
+                          Ex: Escondidinho
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAiRecipePrompt('Bolo de Cenoura de liquidificador com calda de chocolate')
+                          }
+                          className="text-[11px] text-purple-700 hover:underline font-semibold bg-white px-2 py-0.5 rounded-md border border-purple-200"
+                        >
+                          Ex: Bolo de Cenoura
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAiFormatRecipe}
+                        disabled={isAiStructuring || !aiRecipePrompt.trim()}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-md shadow-purple-600/20 transition-all cursor-pointer"
+                      >
+                        {isAiStructuring ? (
+                          <>Formatando com Agnes...</>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            Preencher Campos com IA
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {aiError && <p className="text-xs text-rose-600 font-semibold">{aiError}</p>}
+                  </div>
+                )}
               </div>
 
               {/* MANUAL FORM FIELDS */}
@@ -1228,7 +1741,10 @@ export const AdminDashboard: React.FC = () => {
 
                 <div className="space-y-2 p-3 bg-purple-50/50 rounded-2xl border border-purple-100">
                   <div className="flex items-center justify-between">
-                    <label className="block font-bold text-gray-800">Foto Gastronômica da Receita:</label>
+                    <div>
+                      <label className="block font-bold text-gray-800">Foto Gastronômica da Receita:</label>
+                      <span className="text-[10px] text-purple-700">Fotos de alta definição específicas para este prato</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleGenerateDishImage()}
@@ -1236,12 +1752,12 @@ export const AdminDashboard: React.FC = () => {
                       className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-xs transition-all"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-purple-200" />
-                      {isGeneratingImage ? 'Gerando Imagem...' : '✨ Gerar Imagem com IA'}
+                      {isGeneratingImage ? 'Buscando foto...' : '✨ Gerar / Alternar Foto'}
                     </button>
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <div className="w-20 h-16 rounded-xl bg-gray-200 overflow-hidden shrink-0 border border-purple-200">
+                    <div className="w-20 h-16 rounded-xl bg-gray-200 overflow-hidden shrink-0 border border-purple-200 shadow-inner">
                       <img
                         src={rImageUrl}
                         alt="Preview"
@@ -1258,10 +1774,46 @@ export const AdminDashboard: React.FC = () => {
                         className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs"
                       />
                       <span className="text-[10px] text-gray-500 mt-1 block">
-                        Você pode colar um link personalizado ou clicar em "Gerar Imagem com IA" para criar a foto ideal do prato.
+                        Você pode colar um link personalizado ou clicar em "Gerar / Alternar Foto" para ver mais opções.
                       </span>
                     </div>
                   </div>
+
+                  {imageAlternatives.length > 0 && (
+                    <div className="pt-2 border-t border-purple-100/80">
+                      <div className="text-[11px] font-bold text-purple-900 mb-1.5 flex items-center justify-between">
+                        <span>Opções de fotos culinárias para este prato:</span>
+                        <span className="text-[10px] text-purple-600 font-medium">Clique para escolher</span>
+                      </div>
+                      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                        {imageAlternatives.map((altUrl, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setRImageUrl(altUrl)}
+                            className={`relative rounded-xl overflow-hidden border-2 shrink-0 transition-all ${
+                              rImageUrl === altUrl
+                                ? 'border-purple-600 ring-2 ring-purple-400 scale-105 shadow-sm'
+                                : 'border-purple-200 opacity-70 hover:opacity-100 hover:border-purple-400'
+                            }`}
+                            style={{ width: '68px', height: '50px' }}
+                          >
+                            <img
+                              src={altUrl}
+                              alt={`Opção ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                            {rImageUrl === altUrl && (
+                              <div className="absolute inset-0 bg-purple-900/30 flex items-center justify-center text-white font-black text-xs">
+                                ✓
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Structured Ingredients Editor */}
@@ -1473,49 +2025,179 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL: ADD SHOPEE AFFILIATE PRODUCT */}
+      {/* MODAL: ADD SHOPEE AFFILIATE PRODUCT WITH AUTOMATIC LINK EXTRACTOR */}
       {showShopeeModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-gray-100 space-y-4 text-xs">
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-base text-gray-900 flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5 text-orange-500" />
-                Novo Produto de Afiliado Shopee
-              </h3>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 w-full max-w-xl shadow-2xl border border-gray-100 space-y-4 text-xs max-h-[92vh] overflow-y-auto my-auto">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-xs">
+                  <ShoppingBag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-gray-900">
+                    Cadastrar Produto de Afiliado Shopee
+                  </h3>
+                  <p className="text-[11px] text-gray-500">
+                    Insira seu link de afiliado para puxar automaticamente ou preencha manualmente
+                  </p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowShopeeModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveShopeeProduct} className="space-y-3">
+            {/* AUTOMATIC LINK EXTRACTOR (SEM API) */}
+            <div className="bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100/70 p-4 rounded-2xl border border-orange-200 space-y-2.5 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-orange-950 font-bold text-xs">
+                  <Sparkles className="w-4 h-4 text-orange-600" />
+                  <span>Puxar Dados Automáticos pelo Link (Sem API)</span>
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-wider bg-orange-200/80 text-orange-900 px-2 py-0.5 rounded-full">
+                  Extrator Ativo
+                </span>
+              </div>
+
+              <p className="text-[11px] text-orange-800 leading-relaxed">
+                Cole abaixo o seu link de afiliado Shopee (ex: <code className="bg-white/80 px-1 py-0.5 rounded text-orange-900 font-mono">https://s.shopee.com.br/...</code> ou link direto da loja). A inteligência do ChefPantry segue o redirecionamento, raspa a página e extrai <strong>título limpo, preços com desconto, galeria de fotos, vídeos e descrição completa</strong>!
+              </p>
+
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  placeholder="Cole aqui seu link de afiliado Shopee..."
+                  value={shpAffiliateLink}
+                  onChange={(e) => setShpAffiliateLink(e.target.value)}
+                  className="flex-1 bg-white border border-orange-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500 focus:outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleUnfurlShopeeProduct()}
+                  disabled={isPullingShopee || !shpAffiliateLink.trim()}
+                  className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-md shadow-orange-600/20 transition-all shrink-0 cursor-pointer"
+                >
+                  {isPullingShopee ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Puxando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                      <span>Puxar Dados</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {shopeePullSuccess && (
+                <div className="text-xs text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-1.5 animate-in fade-in shadow-xs">
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{shopeePullSuccess}</span>
+                </div>
+              )}
+
+              {shopeePullError && (
+                <div className="text-xs text-rose-700 font-semibold bg-rose-50 border border-rose-200 p-2.5 rounded-xl">
+                  {shopeePullError}
+                </div>
+              )}
+
+              {/* Quick Test Links */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[10px] text-orange-900 font-bold">Exemplos rápidos para testar o extrator:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = 'https://shopee.com.br/Balan%C3%A7a-Digital-De-Cozinha-Alta-Precis%C3%A3o-10kg-i.31342123.12345678';
+                    setShpAffiliateLink(u);
+                    handleUnfurlShopeeProduct(u);
+                  }}
+                  className="text-[10px] bg-white border border-orange-200 text-orange-900 px-2 py-0.5 rounded-md hover:bg-orange-100 font-medium"
+                >
+                  ⚖️ Balança Digital
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = 'https://shopee.com.br/Fritadeira-Eletrica-Air-Fryer-Sem-Oleo-4L-i.123456.987654';
+                    setShpAffiliateLink(u);
+                    handleUnfurlShopeeProduct(u);
+                  }}
+                  className="text-[10px] bg-white border border-orange-200 text-orange-900 px-2 py-0.5 rounded-md hover:bg-orange-100 font-medium"
+                >
+                  🍟 Airfryer 4L
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = 'https://shopee.com.br/Jogo-De-Panelas-Antiaderente-Ceramica-5-Pecas-i.98765.43210';
+                    setShpAffiliateLink(u);
+                    handleUnfurlShopeeProduct(u);
+                  }}
+                  className="text-[10px] bg-white border border-orange-200 text-orange-900 px-2 py-0.5 rounded-md hover:bg-orange-100 font-medium"
+                >
+                  🍳 Jogo de Panelas
+                </button>
+              </div>
+            </div>
+
+            {/* PRODUCT EDIT FORM */}
+            <form onSubmit={handleSaveShopeeProduct} className="space-y-3.5">
               <div>
                 <label className="block font-bold text-gray-700 mb-1">Título do Produto:</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Balança de Precisão Digital Cozinha..."
+                  placeholder="Ex: Balança de Precisão Digital Cozinha 10kg..."
                   value={shpTitle}
                   onChange={(e) => setShpTitle(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500 font-medium"
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Seu Link de Afiliado Shopee:</label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://shopee.com.br/universal-link/..."
-                  value={shpAffiliateLink}
-                  onChange={(e) => setShpAffiliateLink(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Categoria:</label>
+                  <select
+                    value={shpCategory}
+                    onChange={(e) => setShpCategory(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="Utensílios de Medição">Utensílios de Medição</option>
+                    <option value="Formas & Assadeiras">Formas &amp; Assadeiras</option>
+                    <option value="Panelas & Frigideiras">Panelas &amp; Frigideiras</option>
+                    <option value="Airfryer & Acessórios">Airfryer &amp; Acessórios</option>
+                    <option value="Eletroportáteis">Eletroportáteis</option>
+                    <option value="Organizadores & Potes">Organizadores &amp; Potes</option>
+                    <option value="Facas & Tábuas">Facas &amp; Tábuas</option>
+                    <option value="Acessórios de Cozinha">Acessórios de Cozinha</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Selo / Destaque:</label>
+                  <select
+                    value={shpBadge}
+                    onChange={(e) => setShpBadge(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="Destaque Shopee">Destaque Shopee</option>
+                    <option value="Mais Vendido">Mais Vendido</option>
+                    <option value="Frete Grátis">Frete Grátis</option>
+                    <option value="Super Oferta">Super Oferta</option>
+                    <option value="Escolha do Chef">Escolha do Chef</option>
+                  </select>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              {/* Price & Original Price */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-gray-50 p-3 rounded-2xl border border-gray-100">
                 <div>
                   <label className="block font-bold text-gray-700 mb-1">Preço Atual (R$):</label>
                   <input
@@ -1524,7 +2206,7 @@ export const AdminDashboard: React.FC = () => {
                     required
                     value={shpPrice}
                     onChange={(e) => setShpPrice(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-orange-600 bg-white"
                   />
                 </div>
                 <div>
@@ -1534,36 +2216,123 @@ export const AdminDashboard: React.FC = () => {
                     step="0.01"
                     value={shpOrigPrice}
                     onChange={(e) => setShpOrigPrice(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-500 bg-white"
                   />
+                </div>
+                <div className="col-span-2 sm:col-span-1 flex flex-col justify-center">
+                  <span className="text-[10px] text-gray-500 font-semibold">Desconto Calculado:</span>
+                  <span className="font-black text-sm text-rose-600 mt-0.5">
+                    {parseFloat(shpOrigPrice) > parseFloat(shpPrice)
+                      ? `-${Math.round(((parseFloat(shpOrigPrice) - parseFloat(shpPrice)) / parseFloat(shpOrigPrice)) * 100)}% OFF`
+                      : 'Sem desconto'}
+                  </span>
                 </div>
               </div>
 
+              {/* Description */}
               <div>
-                <label className="block font-bold text-gray-700 mb-1">URL da Imagem:</label>
-                <input
-                  type="url"
-                  required
-                  value={shpImageUrl}
-                  onChange={(e) => setShpImageUrl(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs"
+                <label className="block font-bold text-gray-700 mb-1">Descrição do Produto:</label>
+                <textarea
+                  rows={3}
+                  placeholder="Descrição vendedora com especificações, materiais e vantagens na cozinha..."
+                  value={shpDescription}
+                  onChange={(e) => setShpDescription(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-orange-500"
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowShopeeModal(false)}
-                  className="px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-100 font-bold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold shadow-xs"
-                >
-                  Salvar Produto Shopee
-                </button>
+              {/* Image URL & Gallery */}
+              <div className="space-y-2">
+                <label className="block font-bold text-gray-700">URL da Imagem Principal:</label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    required
+                    value={shpImageUrl}
+                    onChange={(e) => setShpImageUrl(e.target.value)}
+                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono"
+                  />
+                  {shpImageUrl && (
+                    <img
+                      src={shpImageUrl}
+                      alt="Preview"
+                      className="w-10 h-10 rounded-xl object-cover border border-gray-200 shrink-0"
+                    />
+                  )}
+                </div>
+
+                {/* Gallery Thumbnails if multiple images extracted */}
+                {shpImages.length > 1 && (
+                  <div className="pt-1">
+                    <span className="text-[10px] text-gray-500 font-bold block mb-1">
+                      Fotos extraídas ({shpImages.length}) • Clique para definir como imagem de capa:
+                    </span>
+                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                      {shpImages.map((img, idx) => (
+                        <img
+                          key={idx}
+                          src={img}
+                          alt={`Foto ${idx + 1}`}
+                          onClick={() => setShpImageUrl(img)}
+                          className={`w-12 h-12 rounded-lg object-cover cursor-pointer border-2 transition-all ${
+                            shpImageUrl === img
+                              ? 'border-orange-500 scale-105 shadow-xs'
+                              : 'border-transparent hover:border-gray-300 opacity-70 hover:opacity-100'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Video URL (if available) */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-gray-700 flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5 text-orange-600" />
+                    <span>URL do Vídeo do Produto (Opcional):</span>
+                  </label>
+                  {shpVideoUrl && (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      ▶ Vídeo Ativo
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="url"
+                  placeholder="https://... (Vídeo mp4 da Shopee ou demonstrativo)"
+                  value={shpVideoUrl}
+                  onChange={(e) => setShpVideoUrl(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono"
+                />
+                {shpVideoUrl && (
+                  <div className="mt-2 rounded-xl overflow-hidden border border-gray-200 bg-black max-h-40 flex items-center justify-center">
+                    <video src={shpVideoUrl} controls className="max-h-40 w-full object-contain" />
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Action Buttons */}
+              <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-2">
+                <div className="text-[10px] text-gray-400">
+                  Depois você poderá plugar as chaves da API Shopee Open Platform no backend se desejar.
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowShopeeModal(false)}
+                    className="px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-100 font-bold cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold shadow-md shadow-orange-600/20 cursor-pointer"
+                  >
+                    Salvar Produto Shopee
+                  </button>
+                </div>
               </div>
             </form>
           </div>

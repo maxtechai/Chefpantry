@@ -98,6 +98,9 @@ export interface ShopeeProduct {
   badge?: string;
   commissionEstimate?: string;
   clicksCount: number;
+  description?: string;
+  videoUrl?: string;
+  images?: string[];
 }
 
 export interface Mission {

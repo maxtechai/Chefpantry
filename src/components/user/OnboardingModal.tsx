@@ -32,6 +32,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
     );
   };
 
+  const handleSkip = () => {
+    localStorage.setItem('chefpantry_onboarded', 'true');
+    onClose();
+  };
+
   const handleFinishOnboarding = () => {
     // Add selected items to pantry
     const future = new Date();
@@ -81,7 +86,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
               </h2>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg">
+          <button onClick={handleSkip} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -131,7 +136,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
 
         <div className="pt-2 flex items-center justify-between gap-3">
           <button
-            onClick={onClose}
+            onClick={handleSkip}
             className="text-xs font-semibold text-gray-500 hover:text-gray-700"
           >
             Pular por enquanto

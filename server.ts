@@ -27,6 +27,112 @@ if (apiKey) {
   });
 }
 
+// Agnes AI Configuration (Agnes 3.0 Flash for text & Agnes Image 2.5 Flash for image generation)
+const AGNES_API_KEY = process.env.AGNES_API_KEY || 'cpk-y2D6ZtFr7bgpFFq51uplmjeBz7EqR2immS5MwL4vVAbTMzGy';
+const AGNES_BASE_URL = 'https://apihub.agnes-ai.com/v1';
+
+function parseJsonSafe(raw: string): any {
+  if (!raw) throw new Error('Resposta vazia');
+  let clean = raw.trim();
+  if (clean.startsWith('```')) {
+    clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  }
+  const firstBrace = clean.indexOf('{');
+  const lastBrace = clean.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    clean = clean.substring(firstBrace, lastBrace + 1);
+  }
+  return JSON.parse(clean);
+}
+
+// Agnes 3.0 Flash Chat Completions
+async function callAgnesChat(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  options?: { temperature?: number; max_tokens?: number }
+): Promise<string> {
+  if (!AGNES_API_KEY) throw new Error('AGNES_API_KEY não configurada');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const res = await fetch(`${AGNES_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${AGNES_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'agnes-3.0-flash',
+        messages,
+        temperature: options?.temperature ?? 0.3,
+        max_tokens: options?.max_tokens ?? 2048,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      throw new Error(`Agnes Chat API status ${res.status}: ${errBody}`);
+    }
+
+    const data: any = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('Agnes não retornou texto na resposta');
+    }
+    return content;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Agnes Image Generation (agnes-image-2.5-flash)
+async function generateAgnesImage(
+  prompt: string,
+  dishTitle?: string,
+  category?: string
+): Promise<string> {
+  if (!AGNES_API_KEY) throw new Error('AGNES_API_KEY não configurada');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  const cleanTitle = (dishTitle || prompt || 'Prato culinário').trim();
+  const enhancedPrompt = `Gourmet culinary photography of ${cleanTitle}, ${category ? `category ${category}, ` : ''}authentic high-end restaurant dish presentation, freshly cooked, studio food lighting, depth of field, 8k resolution, appetizing, professional chef plating, realistic textures.`;
+
+  try {
+    const res = await fetch(`${AGNES_BASE_URL}/images/generations`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${AGNES_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'agnes-image-2.5-flash',
+        prompt: enhancedPrompt,
+        n: 1,
+        size: '1024x1024',
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      throw new Error(`Agnes Image API status ${res.status}: ${errBody}`);
+    }
+
+    const data: any = await res.json();
+    const url = data?.data?.[0]?.url;
+    if (!url) {
+      throw new Error('Agnes não retornou URL de imagem');
+    }
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number = 25000): Promise<T> {
   return Promise.race([
     promise,
@@ -163,6 +269,531 @@ function buildAlgorithmicZeroWasteMatch(pantryItems: any[], catalogRecipes: any[
   };
 }
 
+// ============================================================
+// SHOPEE PRODUCT EXTRACTOR & OFFICIAL API ADAPTER
+// When official Shopee API credentials are ready, configure in .env:
+// SHOPEE_PARTNER_ID and SHOPEE_PARTNER_KEY
+// ============================================================
+const SHOPEE_PARTNER_ID = process.env.SHOPEE_PARTNER_ID || '';
+const SHOPEE_PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY || '';
+
+function extractMetaTag(html: string, property: string): string | null {
+  const ogRegex = new RegExp(`<meta\\s+[^>]*property=["'](?:og:)?${property}["'][^>]*content=["']([^"']+)["']`, 'i');
+  const nameRegex = new RegExp(`<meta\\s+[^>]*name=["'](?:og:)?${property}["'][^>]*content=["']([^"']+)["']`, 'i');
+  const m1 = html.match(ogRegex);
+  if (m1 && m1[1]) return m1[1];
+  const m2 = html.match(nameRegex);
+  if (m2 && m2[1]) return m2[1];
+  return null;
+}
+
+// Endpoint: Extract & Unfurl Shopee Product Details from Affiliate Link
+app.post('/api/shopee/unfurl', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ error: 'URL do link de afiliado Shopee é obrigatória.' });
+    }
+
+    let inputUrl = url.trim();
+    if (!inputUrl.startsWith('http://') && !inputUrl.startsWith('https://')) {
+      inputUrl = `https://${inputUrl}`;
+    }
+
+    console.log(`[Shopee Scraper] Processando link: ${inputUrl}`);
+
+    let finalUrl = inputUrl;
+    let htmlContent = '';
+    let extractedTitle = '';
+    let extractedDescription = '';
+    let extractedImage = '';
+    const extractedImages: string[] = [];
+    let extractedVideo = '';
+    let extractedPrice = 0;
+    let extractedOrigPrice = 0;
+    let shopId = '';
+    let itemId = '';
+
+    // Step 1: Follow redirects and resolve URL (e.g. s.shopee.com.br -> shopee.com.br/product-...)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      const response = await fetch(inputUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Cache-Control': 'no-cache',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      finalUrl = response.url || inputUrl;
+      htmlContent = await response.text().catch(() => '');
+      console.log(`[Shopee Scraper] URL Final resolvida: ${finalUrl} (HTML len: ${htmlContent.length})`);
+
+      // If initial page was a short link or redirect wrapper, check canonical or og:url
+      if (htmlContent && (inputUrl.includes('s.shopee') || inputUrl.includes('shp.ee') || inputUrl.includes('shope.ee') || finalUrl === inputUrl)) {
+        const canonicalMatch = htmlContent.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i) ||
+          htmlContent.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i) ||
+          htmlContent.match(/window\.location(?:\.replace|\.href)?\s*=\s*['"]([^'"]+)['"]/i) ||
+          htmlContent.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["'][^;]+;\s*url=([^"']+)["']/i);
+
+        if (canonicalMatch && canonicalMatch[1] && canonicalMatch[1].startsWith('http') && canonicalMatch[1] !== finalUrl) {
+          try {
+            console.log(`[Shopee Scraper] Encontrada URL canônica/redirecionada secundária: ${canonicalMatch[1]}`);
+            const secRes = await fetch(canonicalMatch[1], {
+              method: 'GET',
+              headers: {
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.9',
+              },
+            });
+            if (secRes.ok) {
+              finalUrl = secRes.url || canonicalMatch[1];
+              const secHtml = await secRes.text();
+              if (secHtml.length > htmlContent.length) {
+                htmlContent = secHtml;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (fetchErr: any) {
+      console.warn('[Shopee Scraper] Aviso ao seguir redirecionamento:', fetchErr?.message);
+    }
+
+    // Step 2: Extract shopId and itemId from finalUrl, inputUrl, or htmlContent
+    const urlToCheck = finalUrl + ' ' + inputUrl;
+    const matchId =
+      urlToCheck.match(/i\.(\d+)\.(\d+)/) ||
+      urlToCheck.match(/product\/(\d+)\/(\d+)/) ||
+      urlToCheck.match(/item\/(\d+)\/(\d+)/) ||
+      urlToCheck.match(/itemid=(\d+).*?shopid=(\d+)/i) ||
+      urlToCheck.match(/shopid=(\d+).*?itemid=(\d+)/i);
+
+    if (matchId) {
+      shopId = matchId[1];
+      itemId = matchId[2];
+      console.log(`[Shopee Scraper] Detectado shopId: ${shopId}, itemId: ${itemId}`);
+    } else if (htmlContent) {
+      // Look inside HTML for embedded IDs
+      const itemMatchInHtml = htmlContent.match(/"itemid":\s*(\d+)/) || htmlContent.match(/itemid=(\d+)/i) || htmlContent.match(/"itemId":\s*(\d+)/);
+      const shopMatchInHtml = htmlContent.match(/"shopid":\s*(\d+)/) || htmlContent.match(/shopid=(\d+)/i) || htmlContent.match(/"shopId":\s*(\d+)/);
+      if (itemMatchInHtml && shopMatchInHtml) {
+        shopId = shopMatchInHtml[1];
+        itemId = itemMatchInHtml[1];
+        console.log(`[Shopee Scraper] Detectado IDs no HTML -> shopId: ${shopId}, itemId: ${itemId}`);
+      }
+    }
+
+    // Step 3: Extract from HTML OpenGraph, Meta Tags, and Video Elements
+    if (htmlContent) {
+      extractedTitle =
+        extractMetaTag(htmlContent, 'title') ||
+        extractMetaTag(htmlContent, 'product:name') ||
+        '';
+
+      if (!extractedTitle) {
+        const titleTagMatch = htmlContent.match(/<title[^>]*>([^<]+)<\/title>/i);
+        if (titleTagMatch && titleTagMatch[1]) {
+          extractedTitle = titleTagMatch[1].replace(/\|\s*Shopee.*$/i, '').trim();
+        }
+      }
+
+      extractedDescription =
+        extractMetaTag(htmlContent, 'description') ||
+        extractMetaTag(htmlContent, 'product:description') ||
+        '';
+
+      extractedImage =
+        extractMetaTag(htmlContent, 'image') ||
+        extractMetaTag(htmlContent, 'image:secure_url') ||
+        '';
+
+      extractedVideo =
+        extractMetaTag(htmlContent, 'video') ||
+        extractMetaTag(htmlContent, 'video:url') ||
+        extractMetaTag(htmlContent, 'video:secure_url') ||
+        '';
+
+      // HTML5 video tag or source tag check
+      if (!extractedVideo) {
+        const videoTagMatch = htmlContent.match(/<video[^>]+src=["']([^"']+\.mp4[^"']*)["']/i) ||
+          htmlContent.match(/<source[^>]+src=["']([^"']+\.mp4[^"']*)["']/i);
+        if (videoTagMatch && videoTagMatch[1]) {
+          extractedVideo = videoTagMatch[1];
+        }
+      }
+
+      if (extractedImage) {
+        extractedImages.push(extractedImage);
+      }
+
+      // Check JSON-LD in HTML
+      const jsonLdMatches = htmlContent.matchAll(
+        /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+      );
+      for (const m of jsonLdMatches) {
+        try {
+          const parsedLd = JSON.parse(m[1].trim());
+          if (parsedLd) {
+            if (parsedLd.name && !extractedTitle) extractedTitle = parsedLd.name;
+            if (parsedLd.description && !extractedDescription) extractedDescription = parsedLd.description;
+            if (parsedLd.image) {
+              if (Array.isArray(parsedLd.image)) {
+                extractedImages.push(...parsedLd.image);
+              } else if (typeof parsedLd.image === 'string') {
+                extractedImages.push(parsedLd.image);
+              }
+            }
+            if (parsedLd.video?.contentUrl && !extractedVideo) {
+              extractedVideo = parsedLd.video.contentUrl;
+            }
+            if (parsedLd.offers) {
+              const offer = Array.isArray(parsedLd.offers) ? parsedLd.offers[0] : parsedLd.offers;
+              if (offer?.price) {
+                const p = parseFloat(offer.price);
+                if (!isNaN(p) && p > 0) extractedPrice = p;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Step 4: Try public Shopee Item API if shopId and itemId are present
+    if (shopId && itemId) {
+      try {
+        const apiUrl = `https://shopee.com.br/api/v4/item/get?itemid=${itemId}&shopid=${shopId}`;
+        const apiRes = await fetch(apiUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': finalUrl,
+            'Accept': 'application/json',
+          },
+        });
+        if (apiRes.ok) {
+          const apiJson: any = await apiRes.json();
+          const itemData = apiJson?.data;
+          if (itemData) {
+            if (itemData.name && !extractedTitle) extractedTitle = itemData.name;
+            if (itemData.description && !extractedDescription) extractedDescription = itemData.description;
+            if (itemData.price && extractedPrice === 0) {
+              extractedPrice = Number((itemData.price / 100000).toFixed(2));
+            }
+            if (itemData.price_before_discount) {
+              extractedOrigPrice = Number((itemData.price_before_discount / 100000).toFixed(2));
+            }
+            if (itemData.images && Array.isArray(itemData.images)) {
+              const cdnImages = itemData.images.map(
+                (hash: string) => `https://down-br.img.susercontent.com/file/${hash}`
+              );
+              extractedImages.push(...cdnImages);
+            }
+            if (
+              itemData.video_info_list &&
+              Array.isArray(itemData.video_info_list) &&
+              itemData.video_info_list[0]?.default_format?.url
+            ) {
+              extractedVideo = itemData.video_info_list[0].default_format.url;
+            }
+          }
+        }
+      } catch (apiErr: any) {
+        console.warn('[Shopee Scraper] Shopee public item API indisponível:', apiErr?.message);
+      }
+    }
+
+    // Step 5: Clean and parse the slug from the URL
+    let urlSlugTitle = '';
+    try {
+      const pathname = new URL(finalUrl).pathname;
+      const parts = pathname.split('/').filter(Boolean);
+      for (const part of parts) {
+        if (part.includes('-i.') || (!part.startsWith('universal-link') && part.length > 5)) {
+          const slug = part.replace(/-i\.\d+\.\d+.*$/, '').replace(/[-_]/g, ' ');
+          if (slug.length > urlSlugTitle.length) {
+            urlSlugTitle = decodeURIComponent(slug);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Step 6: AI Structuring & Enrichment with Agnes 3.0 Flash (with Gemini fallback)
+    const aiContext = {
+      inputUrl,
+      finalUrl,
+      urlSlugTitle,
+      extractedTitle,
+      extractedDescription: (extractedDescription || '').substring(0, 1000),
+      extractedPrice,
+      extractedOrigPrice,
+      extractedImages: Array.from(new Set(extractedImages)).filter(Boolean).slice(0, 8),
+      extractedVideo,
+    };
+
+    const systemPrompt = `Você é o extrator e curador de produtos Shopee para o e-commerce gastronômico ChefPantry.
+Sua missão é extrair e organizar com precisão os dados de um produto Shopee a partir dos dados brutos raspados de um link de afiliado.
+
+REGRAS OBRIGATÓRIAS:
+1. title: Nome limpo e atrativo do produto em português (remova tags poluídas de vendedor como [ENVIO RÁPIDO], [PRONTA ENTREGA], [FRETE GRÁTIS], [PROMOÇÃO], mantendo a marca e modelo do produto).
+2. description: Descrição profissional e vendedora com 2 a 3 parágrafos curtos destacando utilidade na cozinha, material e benefícios.
+3. category: Escolha a categoria ideal para a cozinha:
+   - "Utensílios de Medição"
+   - "Formas & Assadeiras"
+   - "Panelas & Frigideiras"
+   - "Airfryer & Acessórios"
+   - "Eletroportáteis"
+   - "Organizadores & Potes"
+   - "Facas & Tábuas"
+   - "Acessórios de Cozinha"
+4. price: Preço atual em Reais (número float, ex: 39.90). Se não veio no HTML, deduza um valor justo de mercado para o item indicado.
+5. originalPrice: Preço original "de:" (sempre maior que o price para gerar desconto, ex: 59.90).
+6. imageUrl: URL da imagem principal (priorize imagens de CDN da Shopee ou fotos de alta qualidade do produto).
+7. images: Lista com 2 a 5 URLs de fotos do produto.
+8. videoUrl: URL de vídeo se foi extraído, ou deixe vazio string "" se não houver.
+9. badge: Selo persuasivo ("Destaque Shopee", "Mais Vendido", "Frete Grátis", "Super Oferta" ou "Escolha do Chef").
+10. commissionEstimate: Estimativa em R$ da comissão de afiliado (12% do preço atual, ex: "R$ 4,79").
+11. rating: Nota de avaliação (número entre 4.7 e 5.0).
+12. salesCount: Texto de vendas ("1.2k+ vendidos", "5k+ vendidos", "10k+ vendidos").
+
+Retorne ESTRITAMENTE o JSON no esquema solicitado.`;
+
+    let finalProductData: any = null;
+
+    // Call Agnes 3.0 Flash for structuring
+    try {
+      console.log(`[Shopee Scraper] Estruturando produto com Agnes 3.0 Flash...`);
+      const agnesReply = await callAgnesChat([
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: `Extraia e organize os dados deste produto Shopee:\n${JSON.stringify(aiContext, null, 2)}`,
+        },
+      ]);
+      finalProductData = parseJsonSafe(agnesReply);
+    } catch (agnesErr: any) {
+      console.warn('[Shopee Scraper] Agnes falhou/timeout, acionando fallback Gemini:', agnesErr?.message);
+    }
+
+    // Fallback: Gemini API
+    if (!finalProductData || !finalProductData.title) {
+      try {
+        const geminiOutput = await callGeminiWithFailover({
+          contents: `Extraia e organize os dados deste produto Shopee:\n${JSON.stringify(aiContext, null, 2)}`,
+          config: {
+            systemInstruction: systemPrompt,
+            responseMimeType: 'application/json',
+          },
+        });
+        finalProductData = parseJsonSafe(geminiOutput);
+      } catch (gemErr: any) {
+        console.warn('[Shopee Scraper] Gemini fallback falhou, usando extrator algorítmico:', gemErr?.message);
+      }
+    }
+
+    // Tertiary Fallback: Algorithmic fallback if AI unavailable
+    if (!finalProductData || !finalProductData.title) {
+      const fallbackTitle = extractedTitle || urlSlugTitle || 'Acessório Gourmet Shopee';
+      const p = extractedPrice > 0 ? extractedPrice : 49.9;
+      const op = extractedOrigPrice > p ? extractedOrigPrice : Number((p * 1.45).toFixed(2));
+      const primaryImg =
+        extractedImages[0] ||
+        extractedImage ||
+        'https://images.unsplash.com/photo-1594498653385-d5172c532c00?auto=format&fit=crop&w=800&q=80';
+
+      finalProductData = {
+        title: fallbackTitle,
+        description:
+          extractedDescription ||
+          'Produto oficial selecionado para sua cozinha prática com alta durabilidade, facilidade de limpeza e ótimo acabamento.',
+        category: 'Acessórios de Cozinha',
+        price: p,
+        originalPrice: op,
+        imageUrl: primaryImg,
+        images: extractedImages.length > 0 ? extractedImages : [primaryImg],
+        videoUrl: extractedVideo || '',
+        badge: 'Destaque Shopee',
+        commissionEstimate: `R$ ${(p * 0.12).toFixed(2)}`,
+        rating: 4.9,
+        reviewsCount: 1420,
+        salesCount: '5k+ vendidos',
+      };
+    }
+
+    // Ensure affiliateLink is preserved as the user's input URL
+    const priceNum = Number(finalProductData.price) || 29.9;
+    const origPriceNum = Number(finalProductData.originalPrice) || Number((priceNum * 1.4).toFixed(2));
+    const disc = origPriceNum > priceNum ? Math.round(((origPriceNum - priceNum) / origPriceNum) * 100) : 0;
+
+    return res.json({
+      title: finalProductData.title,
+      description: finalProductData.description || '',
+      category: finalProductData.category || 'Acessórios de Cozinha',
+      price: priceNum,
+      originalPrice: origPriceNum,
+      discountPercent: disc,
+      imageUrl:
+        finalProductData.imageUrl ||
+        extractedImage ||
+        'https://images.unsplash.com/photo-1594498653385-d5172c532c00?auto=format&fit=crop&w=800&q=80',
+      images:
+        Array.isArray(finalProductData.images) && finalProductData.images.length > 0
+          ? finalProductData.images
+          : [finalProductData.imageUrl],
+      videoUrl: finalProductData.videoUrl || extractedVideo || '',
+      badge: finalProductData.badge || 'Destaque Shopee',
+      commissionEstimate: finalProductData.commissionEstimate || `R$ ${(priceNum * 0.12).toFixed(2)}`,
+      rating: Number(finalProductData.rating) || 4.9,
+      reviewsCount: Number(finalProductData.reviewsCount) || 1200,
+      salesCount: finalProductData.salesCount || '5k+ vendidos',
+      affiliateLink: inputUrl,
+      resolvedCanonicalUrl: finalUrl,
+      source: 'shopee-scraper-ai',
+      hasOfficialApiConfigured: Boolean(SHOPEE_PARTNER_ID && SHOPEE_PARTNER_KEY),
+    });
+  } catch (err: any) {
+    console.error('Error in shopee unfurl:', err);
+    return res.status(500).json({ error: err.message || 'Erro ao puxar dados do produto Shopee.' });
+  }
+});
+
+// 0. Endpoint: Interactive Chat with Agnes AI for Recipe Consulting & Generation
+app.post('/api/agnes/chat', async (req, res) => {
+  try {
+    const { messages } = req.body;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'Array de mensagens é obrigatório' });
+    }
+
+    const systemInstruction = `Você é a Agnes AI, chef executiva consultora e especialista em gastronomia brasileira e internacional do ChefPantry.
+Você conversa em tom acolhedor, profissional e criativo com o administrador do sistema para sugerir pratos irresistíveis, combinações de sabores, técnicas e criar receitas completas de alto nível para o catálogo oficial.
+Diretrizes:
+1. Responda em português brasileiro de forma clara e envolvente.
+2. Dê dicas de culinária práticas e autênticas.
+3. Se o usuário pedir uma receita (ou quando você sugerir um prato específico detalhado), SEMPRE inclua ao final da sua resposta o bloco especial:
+[RECEITA_ESTRUTURADA]
+{
+  "title": "Nome do Prato",
+  "description": "Breve descrição convidativa do prato",
+  "category": "Doces & Sobremesas" | "Almoço rápido" | "Jantar" | "Airfryer & Prático" | "Café da manhã" | "Fit & Saudável",
+  "prepTime": 15,
+  "cookTime": 30,
+  "servings": 4,
+  "difficulty": "Fácil" | "Médio" | "Difícil",
+  "estimatedCalories": 350,
+  "ingredients": [
+    { "name": "Nome do ingrediente", "quantity": "2", "unit": "xícaras", "category": "Mercearia & Grãos" }
+  ],
+  "instructions": [
+    { "step": 1, "title": "Nome do passo", "text": "Explicação do que fazer", "timeMinutes": 5 }
+  ],
+  "suggestedShopeeProducts": [
+    { "name": "Utensílio útil", "searchKeywords": "palavra-chave", "reason": "motivo" }
+  ],
+  "tips": ["Dica especial"]
+}
+[/RECEITA_ESTRUTURADA]
+Esse bloco permite que o administrador clique em um botão na interface para preencher instantaneamente todos os campos do catálogo com a receita criada na conversa!`;
+
+    // 1. PRIMARY: Call Agnes 3.0 Flash
+    try {
+      console.log('[AI Chat] Enviando mensagem para Agnes 3.0 Flash...');
+      const chatMessages = [
+        { role: 'system' as const, content: systemInstruction },
+        ...messages.map((m: any) => ({
+          role: (m.role === 'assistant' ? 'assistant' : 'user') as 'assistant' | 'user',
+          content: String(m.content || ''),
+        })),
+      ];
+
+      const agnesReply = await callAgnesChat(chatMessages, {
+        temperature: 0.6,
+        max_tokens: 1600,
+      });
+
+      if (agnesReply) {
+        // Check if there is structured recipe data
+        let structuredRecipe: any = null;
+        const match = agnesReply.match(/\[RECEITA_ESTRUTURADA\]([\s\S]*?)\[\/RECEITA_ESTRUTURADA\]/);
+        if (match && match[1]) {
+          try {
+            structuredRecipe = parseJsonSafe(match[1]);
+          } catch (e) {
+            console.warn('Could not parse structured recipe inside chat response:', e);
+          }
+        }
+
+        // Clean user display text
+        const cleanDisplayText = agnesReply
+          .replace(/\[RECEITA_ESTRUTURADA\][\s\S]*?\[\/RECEITA_ESTRUTURADA\]/, '')
+          .trim();
+
+        return res.json({
+          reply: cleanDisplayText || agnesReply,
+          structuredRecipe,
+          source: 'agnes-3.0-flash',
+        });
+      }
+    } catch (agnesErr: any) {
+      console.warn('[AI Chat] Falha no Agnes Chat, usando fallback Gemini:', agnesErr?.message);
+    }
+
+    // 2. FALLBACK: Gemini API
+    try {
+      const geminiContents = messages.map((m: any) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: String(m.content || '') }],
+      }));
+
+      const geminiReply = await callGeminiWithFailover({
+        contents: geminiContents,
+        config: {
+          systemInstruction,
+        },
+      });
+
+      let structuredRecipe: any = null;
+      const match = (geminiReply || '').match(/\[RECEITA_ESTRUTURADA\]([\s\S]*?)\[\/RECEITA_ESTRUTURADA\]/);
+      if (match && match[1]) {
+        try {
+          structuredRecipe = parseJsonSafe(match[1]);
+        } catch (e) {
+          console.warn('Could not parse structured recipe inside gemini chat response:', e);
+        }
+      }
+
+      const cleanDisplayText = (geminiReply || '')
+        .replace(/\[RECEITA_ESTRUTURADA\][\s\S]*?\[\/RECEITA_ESTRUTURADA\]/, '')
+        .trim();
+
+      return res.json({
+        reply: cleanDisplayText || geminiReply,
+        structuredRecipe,
+        source: 'gemini-fallback',
+      });
+    } catch (geminiErr: any) {
+      console.error('[AI Chat] Falha no fallback Gemini:', geminiErr);
+      return res.status(500).json({
+        error: 'Não foi possível processar a conversa no momento. Tente novamente em instantes.',
+      });
+    }
+  } catch (err: any) {
+    console.error('Error in chat endpoint:', err);
+    return res.status(500).json({ error: err.message || 'Erro interno no chat' });
+  }
+});
+
 // 1. Endpoint: AI Assistant for Admin Recipe Structuring
 app.post('/api/gemini/format-recipe', async (req, res) => {
   try {
@@ -204,6 +835,29 @@ Retorne estritamente o JSON no esquema solicitado.`;
     const userPrompt = `Formate a seguinte receita culinária em dados estruturados e precisos:
 ${inputContent}`;
 
+    // 1. PRIMARY: Call Agnes 3.0 Flash for recipe structuring
+    try {
+      console.log(`[AI Text] Estruturando receita com Agnes 3.0 Flash para: "${inputContent}"`);
+      const agnesOutput = await callAgnesChat([
+        {
+          role: 'system',
+          content: `${systemInstruction}\nIMPORTANTE: Retorne ESTRITAMENTE o objeto JSON correspondente aos campos: title, description, category, prepTime, cookTime, servings, difficulty, estimatedCalories, ingredients (array de {name, quantity, unit, category}), instructions (array de {step, title, text, timeMinutes}), suggestedShopeeProducts (array de {name, searchKeywords, reason}), tips (array de string). Sem markdown ou texto fora do JSON.`,
+        },
+        {
+          role: 'user',
+          content: userPrompt,
+        },
+      ]);
+      const parsedAgnes = parseJsonSafe(agnesOutput);
+      if (parsedAgnes && parsedAgnes.title && Array.isArray(parsedAgnes.ingredients) && parsedAgnes.ingredients.length > 0) {
+        console.log(`[AI Text] Receita estruturada com sucesso via Agnes 3.0 Flash: "${parsedAgnes.title}"`);
+        return res.json(parsedAgnes);
+      }
+    } catch (agnesErr: any) {
+      console.warn('[AI Text] Agnes format-recipe indisponível/falhou, acionando fallback Gemini:', agnesErr?.message);
+    }
+
+    // 2. FALLBACK: Gemini API
     try {
       const textOutput = await callGeminiWithFailover({
         contents: userPrompt,
@@ -421,6 +1075,33 @@ Seu objetivo é:
 3. Se os itens da despensa permitirem ou sugerirem algo criativo, crie também 1 receita original "Cozinha Zero Desperdício" sob medida utilizando primariamente os itens disponíveis que estão vencendo logo!
 Responda estritamente no esquema JSON fornecido.`;
 
+    // 1. PRIMARY: Call Agnes 3.0 Flash for zero-waste matching & custom recipe
+    try {
+      console.log('[AI Text] Processando Zero-Waste Match com Agnes 3.0 Flash...');
+      const agnesOutput = await callAgnesChat([
+        {
+          role: 'system',
+          content: `${systemInstruction}\nIMPORTANTE: Retorne ESTRITAMENTE um objeto JSON válido com:
+- pantryAnalysisSummary (string)
+- catalogMatches (array de { recipeId, matchPercentage, availableIngredients: string[], missingIngredients: string[], zeroWasteTip: string })
+- aiCustomRecipe ({ title, description, category, prepTime, cookTime, servings, difficulty, savedExpiringItems: string[], ingredients: array de { name, quantity, unit, isFromPantry: boolean }, instructions: array de { step, title, text, timeMinutes }, chefTip: string })
+Sem markdown ou comentários adicionais fora do JSON.`,
+        },
+        {
+          role: 'user',
+          content: `Analise estes dados de despensa e receitas:\n${JSON.stringify(promptData, null, 2)}`,
+        },
+      ]);
+      const parsedAgnes = parseJsonSafe(agnesOutput);
+      if (parsedAgnes && parsedAgnes.pantryAnalysisSummary && Array.isArray(parsedAgnes.catalogMatches)) {
+        console.log('[AI Text] Zero-Waste Match processado com sucesso via Agnes 3.0 Flash');
+        return res.json(parsedAgnes);
+      }
+    } catch (agnesErr: any) {
+      console.warn('[AI Text] Agnes zero-waste-match indisponível/falhou, acionando fallback Gemini:', agnesErr?.message);
+    }
+
+    // 2. FALLBACK: Gemini API
     try {
       const textOutput = await callGeminiWithFailover({
         contents: `Analise estes dados de despensa e receitas:\n${JSON.stringify(promptData, null, 2)}`,
@@ -533,6 +1214,33 @@ Responda em formato JSON padronizado.`;
 Contexto da receita: "${recipeContext || 'Preparo culinário geral'}".
 Ingredientes que o usuário tem na despensa: ${JSON.stringify(pantryItems || [])}.`;
 
+    // 1. PRIMARY: Call Agnes 3.0 Flash for ingredient substitutes
+    try {
+      console.log(`[AI Text] Buscando substitutos com Agnes 3.0 Flash para: "${ingredientName}"`);
+      const agnesOutput = await callAgnesChat([
+        {
+          role: 'system',
+          content: `${systemInstruction}\nIMPORTANTE: Retorne ESTRITAMENTE um objeto JSON com:
+- ingredient (string)
+- substitutes (array de { name: string, ratio: string, flavorNote: string, alreadyInUserPantry: boolean, bestFor: string })
+- expertTip (string)
+Sem markdown ou comentários fora do JSON.`,
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ]);
+      const parsedAgnes = parseJsonSafe(agnesOutput);
+      if (parsedAgnes && parsedAgnes.ingredient && Array.isArray(parsedAgnes.substitutes)) {
+        console.log(`[AI Text] Substitutos obtidos via Agnes 3.0 Flash para: "${ingredientName}"`);
+        return res.json(parsedAgnes);
+      }
+    } catch (agnesErr: any) {
+      console.warn('[AI Text] Agnes substitute indisponível/falhou, acionando fallback Gemini:', agnesErr?.message);
+    }
+
+    // 2. FALLBACK: Gemini API
     try {
       const textOutput = await callGeminiWithFailover({
         contents: prompt,
@@ -635,6 +1343,34 @@ Classifique a categoria de armazenamento ideal: 'Geladeira', 'Freezer' ou 'Armá
 ${rawText || 'Leite, 6 ovos, queijo mussarela, 1kg de arroz, 2 cenouras, cebola, peito de frango'}`;
     }
 
+    // 1. PRIMARY (for text scan): Call Agnes 3.0 Flash
+    if (!imageBase64) {
+      try {
+        console.log('[AI Text] Escaneando texto da despensa com Agnes 3.0 Flash...');
+        const agnesOutput = await callAgnesChat([
+          {
+            role: 'system',
+            content: `${systemInstruction}\nIMPORTANTE: Retorne ESTRITAMENTE um objeto JSON com:
+- detectedItems: array de { name: string, quantity: string, unit: string, location: string, category: string, estimatedShelfLifeDays: number }
+- summaryText: string resumo
+Sem comentários fora do JSON.`,
+          },
+          {
+            role: 'user',
+            content: contentsPayload,
+          },
+        ]);
+        const parsedAgnes = parseJsonSafe(agnesOutput);
+        if (parsedAgnes && Array.isArray(parsedAgnes.detectedItems)) {
+          console.log('[AI Text] Despensa estruturada com sucesso via Agnes 3.0 Flash');
+          return res.json(parsedAgnes);
+        }
+      } catch (agnesErr: any) {
+        console.warn('[AI Text] Agnes pantry-scan falhou/indisponível, usando fallback Gemini:', agnesErr?.message);
+      }
+    }
+
+    // 2. FALLBACK: Gemini API
     try {
       const textOutput = await callGeminiWithFailover({
         contents: contentsPayload,
@@ -838,12 +1574,30 @@ app.post('/api/gemini/generate-image', async (req, res) => {
     // Select a photo, preferably different from the current avoidUrl
     const nonAvoided = availablePhotos.filter((url) => url !== avoidUrl);
     const selectedList = nonAvoided.length > 0 ? nonAvoided : availablePhotos;
-    const selectedUrl = selectedList[0];
+    const fallbackUrl = selectedList[0];
 
+    // 1. PRIMARY: Generate real AI gastronomic image using Agnes Image 2.5 Flash
+    try {
+      console.log(`[AI Image] Gerando imagem gastronômica com Agnes Image 2.5 Flash para: "${dishTitle || prompt}"`);
+      const agnesImageUrl = await generateAgnesImage(prompt, dishTitle, category);
+      if (agnesImageUrl && agnesImageUrl.startsWith('http')) {
+        console.log(`[AI Image] Sucesso Agnes Image: ${agnesImageUrl}`);
+        return res.json({
+          imageUrl: agnesImageUrl,
+          alternatives: [agnesImageUrl, ...availablePhotos.filter((u) => u !== agnesImageUrl)],
+          source: 'agnes_image_2.5_flash',
+          dishTitle: dishTitle || prompt,
+        });
+      }
+    } catch (agnesErr: any) {
+      console.warn('[AI Image] Falha na geração Agnes Image, aplicando fallback gastronômico:', agnesErr?.message);
+    }
+
+    // 2. FALLBACK: Curated Gastronomy Library
     return res.json({
-      imageUrl: selectedUrl,
+      imageUrl: fallbackUrl,
       alternatives: availablePhotos,
-      source: 'culinary_gastronomy_ai',
+      source: 'culinary_gastronomy_fallback',
       dishTitle: dishTitle || prompt,
     });
   } catch (error: any) {
